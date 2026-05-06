@@ -26,7 +26,6 @@ def check_auth(username, password):
     return username == ADMIN_LOGIN and password == ADMIN_PASSWORD
 
 def authenticate():
-    # Эта функция вызывает стандартное окно браузера для ввода пароля
     return Response(
         'Требуется авторизация для доступа к панели управления.', 401,
         {'WWW-Authenticate': 'Basic realm="Admin Login Required"'})
@@ -82,7 +81,7 @@ def init_db():
     conn.close()
 
 # ---------------------------------------------------------
-# СТРАНИЦА ПОКУПАТЕЛЯ (ЧИСТЫЙ ЛЕНДИНГ С ЛОГОТИПОМ)
+# СТРАНИЦА ПОКУПАТЕЛЯ С ГАЛОЧКОЙ ПОЛИТИКИ КОНФИДЕНЦИАЛЬНОСТИ
 # ---------------------------------------------------------
 HTML_PAGE = """
 <!DOCTYPE html>
@@ -219,6 +218,37 @@ HTML_PAGE = """
         .select2-container--default .select2-selection--single .select2-selection__arrow { height: 46px !important; right: 10px !important; }
         .select2-container { width: 100% !important; }
 
+        /* СТИЛИ ДЛЯ ЧЕКБОКСА СОГЛАСИЯ */
+        .checkbox-group {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            margin-bottom: 20px;
+            margin-top: 25px;
+        }
+        .checkbox-group input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            margin-top: 2px;
+            accent-color: var(--brand-color);
+            cursor: pointer;
+        }
+        .checkbox-group label {
+            font-size: 12px;
+            font-weight: 400;
+            line-height: 1.4;
+            color: var(--text-muted);
+            margin-bottom: 0;
+            text-transform: none;
+        }
+        .checkbox-group a {
+            color: var(--brand-color);
+            text-decoration: underline;
+        }
+        .checkbox-group a:hover {
+            text-decoration: none;
+        }
+
         button { 
             background: var(--brand-color); 
             color: white; 
@@ -228,7 +258,6 @@ HTML_PAGE = """
             border-radius: 30px; 
             font-size: 16px; 
             font-weight: 500; 
-            margin-top: 10px; 
             cursor: pointer; 
             transition: opacity 0.2s; 
         }
@@ -317,6 +346,15 @@ HTML_PAGE = """
                     <input type="file" id="photo" accept="image/*" required>
                 </div>
 
+                <!-- ГАЛОЧКА СОГЛАСИЯ НА ОБРАБОТКУ ДАННЫХ -->
+                <div class="checkbox-group">
+                    <input type="checkbox" id="privacy_policy" required>
+                    <label for="privacy_policy">
+                        Я даю согласие на обработку моих персональных данных и принимаю условия 
+                        <a href="https://alkoteka.com/privacy-policy" target="_blank">Политики конфиденциальности</a>
+                    </label>
+                </div>
+
                 <button type="submit" id="submitBtn">Зарегистрировать</button>
             </form>
             <div id="msg"></div>
@@ -377,6 +415,7 @@ HTML_PAGE = """
             
             const cityVal = $('#city').val();
             const addrVal = $('#address').val();
+            
             if (!cityVal || !addrVal) {
                 msg.className = 'error';
                 msg.innerHTML = 'Пожалуйста, выберите город и адрес магазина.';
@@ -520,13 +559,11 @@ def register():
     except sqlite3.IntegrityError:
         return jsonify({"status": "error", "message": "Ошибка: этот чек уже зарегистрирован в данном магазине."})
 
-# ДОБАВЛЕН ДЕКОРАТОР @requires_auth ДЛЯ ЗАЩИТЫ ФОТО
 @app.route('/receipt_photos/<filename>')
 @requires_auth
 def uploaded_file(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
 
-# ДОБАВЛЕН ДЕКОРАТОР @requires_auth ДЛЯ ЗАЩИТЫ АДМИНКИ
 @app.route('/admin')
 @requires_auth
 def admin_panel():
@@ -537,7 +574,6 @@ def admin_panel():
     conn.close()
     return render_template_string(ADMIN_PAGE, rows=rows)
 
-# ДОБАВЛЕН ДЕКОРАТОР @requires_auth ДЛЯ ЗАЩИТЫ ВЫГРУЗКИ БАЗЫ
 @app.route('/admin/export')
 @requires_auth
 def export_excel():

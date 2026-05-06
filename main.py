@@ -8,7 +8,7 @@ from flask import Flask, request, jsonify, render_template_string, send_from_dir
 
 app = Flask(__name__)
 
-# Получаем путь к текущей папке
+# Получаем путь к текущей папке для корректной работы на хостинге
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 # Настройки папки для фото чеков
@@ -40,7 +40,7 @@ def requires_auth(f):
     return decorated
 
 # ---------------------------------------------------------
-# АВТОМАТИЧЕСКАЯ ЗАГРУЗКА БАЗЫ МАГАЗИНОВ ИЗ EXCEL
+# ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ И EXCEL (ГЛОБАЛЬНО ДЛЯ ХОСТИНГА)
 # ---------------------------------------------------------
 def load_stores_from_excel(filename="StoreAlk.xlsx"):
     stores = {}
@@ -64,24 +64,32 @@ def load_stores_from_excel(filename="StoreAlk.xlsx"):
 STORES_DATA = load_stores_from_excel()
 
 def init_db():
-    conn = sqlite3.connect(os.path.join(BASE_DIR, 'database.db'))
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS receipts
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                  user_name TEXT,
-                  user_phone TEXT,
-                  city TEXT, 
-                  address TEXT, 
-                  purchase_date TEXT, 
-                  purchase_time TEXT, 
-                  receipt_number TEXT, 
-                  photo_path TEXT,
-                  UNIQUE(city, address, receipt_number))''')
-    conn.commit()
-    conn.close()
+    try:
+        db_path = os.path.join(BASE_DIR, 'database.db')
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS receipts
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                      user_name TEXT,
+                      user_phone TEXT,
+                      city TEXT, 
+                      address TEXT, 
+                      purchase_date TEXT, 
+                      purchase_time TEXT, 
+                      receipt_number TEXT, 
+                      photo_path TEXT,
+                      UNIQUE(city, address, receipt_number))''')
+        conn.commit()
+        conn.close()
+        print("База данных успешно инициализирована.")
+    except Exception as e:
+        print(f"Критическая ошибка при создании базы: {e}")
+
+# ВАЖНО: Вызываем функцию создания базы сразу при старте (для Render)
+init_db()
 
 # ---------------------------------------------------------
-# СТРАНИЦА ПОКУПАТЕЛЯ С ГАЛОЧКОЙ ПОЛИТИКИ КОНФИДЕНЦИАЛЬНОСТИ
+# HTML СТРАНИЦЫ
 # ---------------------------------------------------------
 HTML_PAGE = """
 <!DOCTYPE html>
@@ -218,7 +226,6 @@ HTML_PAGE = """
         .select2-container--default .select2-selection--single .select2-selection__arrow { height: 46px !important; right: 10px !important; }
         .select2-container { width: 100% !important; }
 
-        /* СТИЛИ ДЛЯ ЧЕКБОКСА СОГЛАСИЯ */
         .checkbox-group {
             display: flex;
             align-items: flex-start;
@@ -245,9 +252,7 @@ HTML_PAGE = """
             color: var(--brand-color);
             text-decoration: underline;
         }
-        .checkbox-group a:hover {
-            text-decoration: none;
-        }
+        .checkbox-group a:hover { text-decoration: none; }
 
         button { 
             background: var(--brand-color); 
@@ -346,7 +351,6 @@ HTML_PAGE = """
                     <input type="file" id="photo" accept="image/*" required>
                 </div>
 
-                <!-- ГАЛОЧКА СОГЛАСИЯ НА ОБРАБОТКУ ДАННЫХ -->
                 <div class="checkbox-group">
                     <input type="checkbox" id="privacy_policy" required>
                     <label for="privacy_policy">
@@ -365,17 +369,8 @@ HTML_PAGE = """
         const stores = {{ stores_json|safe }};
         
         $(document).ready(function() {
-            $('#city').select2({
-                placeholder: "Выберите город",
-                width: '100%',
-                language: { noResults: () => "Город не найден" }
-            });
-
-            $('#address').select2({
-                placeholder: "Сначала выберите город",
-                width: '100%',
-                language: { noResults: () => "Адрес не найден" }
-            });
+            $('#city').select2({ placeholder: "Выберите город", width: '100%', language: { noResults: () => "Город не найден" } });
+            $('#address').select2({ placeholder: "Сначала выберите город", width: '100%', language: { noResults: () => "Адрес не найден" } });
 
             const dateInput = document.getElementById('p_date');
             const today = new Date().toISOString().split('T')[0];
@@ -386,15 +381,12 @@ HTML_PAGE = """
                 const city = $(this).val();
                 const addrSelect = $('#address');
                 
-                addrSelect.empty();
-                addrSelect.append('<option value=""></option>');
+                addrSelect.empty().append('<option value=""></option>');
 
                 if (city) {
                     addrSelect.prop('disabled', false);
                     let sortedAddresses = stores[city].sort();
-                    sortedAddresses.forEach(a => {
-                        addrSelect.append(new Option(a, a));
-                    });
+                    sortedAddresses.forEach(a => addrSelect.append(new Option(a, a)));
                     addrSelect.select2({ placeholder: "Выберите адрес", width: '100%' });
                 } else {
                     addrSelect.prop('disabled', true);
@@ -415,7 +407,6 @@ HTML_PAGE = """
             
             const cityVal = $('#city').val();
             const addrVal = $('#address').val();
-            
             if (!cityVal || !addrVal) {
                 msg.className = 'error';
                 msg.innerHTML = 'Пожалуйста, выберите город и адрес магазина.';
@@ -460,9 +451,6 @@ HTML_PAGE = """
 </html>
 """
 
-# ---------------------------------------------------------
-# ПАНЕЛЬ АДМИНИСТРАТОРА
-# ---------------------------------------------------------
 ADMIN_PAGE = """
 <!DOCTYPE html>
 <html lang="ru">
@@ -507,7 +495,7 @@ ADMIN_PAGE = """
 """
 
 # ---------------------------------------------------------
-# ЛОГИКА ОБРАБОТКИ (БЭКЕНД)
+# ЛОГИКА ОБРАБОТКИ ЗАПРОСОВ
 # ---------------------------------------------------------
 @app.route('/')
 def index():
@@ -520,35 +508,37 @@ def serve_logo():
 
 @app.route('/register', methods=['POST'])
 def register():
-    name = request.form.get('name')
-    phone = request.form.get('phone')
-    city = request.form.get('city')
-    address = request.form.get('address')
-    r_num = request.form.get('r_num')
-    p_date = request.form.get('date')
-    p_time = request.form.get('time')
-    photo = request.files.get('photo')
-
-    if not phone or not re.match(r'^\+79\d{9}$', phone):
-        return jsonify({"status": "error", "message": "Ошибка: Номер телефона должен быть в формате +79XXXXXXXXX (12 символов)."})
-
     try:
-        parsed_date = datetime.strptime(p_date, '%Y-%m-%d')
-        current_date = datetime.now()
-        if parsed_date.year < 2025:
-            return jsonify({"status": "error", "message": "Ошибка: К участию принимаются чеки не старше 2025 года."})
-        if parsed_date > current_date:
-            return jsonify({"status": "error", "message": "Ошибка: Дата покупки не может быть в будущем."})
-    except ValueError:
-        return jsonify({"status": "error", "message": "Ошибка: Неверный формат даты."})
+        name = request.form.get('name')
+        phone = request.form.get('phone')
+        city = request.form.get('city')
+        address = request.form.get('address')
+        r_num = request.form.get('r_num')
+        p_date = request.form.get('date')
+        p_time = request.form.get('time')
+        photo = request.files.get('photo')
 
-    photo_path = ""
-    if photo:
-        filename = f"{phone}_{r_num}_{photo.filename}"
-        photo_path = os.path.join('receipt_photos', filename).replace('\\', '/')
-        photo.save(os.path.join(UPLOAD_FOLDER, filename))
+        if not phone or not re.match(r'^\+79\d{9}$', phone):
+            return jsonify({"status": "error", "message": "Ошибка: Номер телефона должен быть в формате +79XXXXXXXXX (12 символов)."})
 
-    try:
+        try:
+            parsed_date = datetime.strptime(p_date, '%Y-%m-%d')
+            current_date = datetime.now()
+            if parsed_date.year < 2025:
+                return jsonify({"status": "error", "message": "Ошибка: К участию принимаются чеки не старше 2025 года."})
+            if parsed_date > current_date:
+                return jsonify({"status": "error", "message": "Ошибка: Дата покупки не может быть в будущем."})
+        except ValueError:
+            return jsonify({"status": "error", "message": "Ошибка: Неверный формат даты."})
+
+        photo_path = ""
+        if photo:
+            # Очищаем имя файла от лишних слешей для безопасности путей
+            safe_filename = photo.filename.replace('/', '').replace('\\', '')
+            filename = f"{phone}_{r_num}_{safe_filename}"
+            photo_path = os.path.join('receipt_photos', filename).replace('\\', '/')
+            photo.save(os.path.join(UPLOAD_FOLDER, filename))
+
         conn = sqlite3.connect(os.path.join(BASE_DIR, 'database.db'))
         c = conn.cursor()
         c.execute("INSERT INTO receipts (user_name, user_phone, city, address, purchase_date, purchase_time, receipt_number, photo_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -556,8 +546,13 @@ def register():
         conn.commit()
         conn.close()
         return jsonify({"status": "success", "message": "Чек успешно зарегистрирован! Удачи в розыгрыше."})
+        
     except sqlite3.IntegrityError:
         return jsonify({"status": "error", "message": "Ошибка: этот чек уже зарегистрирован в данном магазине."})
+    except Exception as e:
+        # Теперь, если возникнет сбой, в логах Render появится точная ошибка!
+        print(f"КРИТИЧЕСКАЯ ОШИБКА В /register: {str(e)}")
+        return jsonify({"status": "error", "message": "Внутренняя системная ошибка. Обратитесь к администратору."})
 
 @app.route('/receipt_photos/<filename>')
 @requires_auth
@@ -586,5 +581,4 @@ def export_excel():
     return send_file(export_file, as_attachment=True)
 
 if __name__ == '__main__':
-    init_db()
     app.run(host='0.0.0.0', port=8080)
